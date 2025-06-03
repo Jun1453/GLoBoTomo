@@ -23,12 +23,18 @@ class Model(list):
                     self.append(Block(bid=block_count, context=self, clon=block_center_longitude, clat=band_center_latitude, crad=np.mean([bottom_radius, top_radius]), hx=width_on_band, hy=self.block_size, hz=top_radius-bottom_radius))
                     block_count += 1
 
+    def getKernel(self, raypaths):
+        kernel = np.zeros((len(raypaths), len(self)))
+        for raypath_index, raypath in enumerate(raypaths):
+            for block in self:
+                kernel[raypath_index, block.id] += 1
+        return kernel
 
     def __repr__(self):
         return f'A model contains {len(self)} blocks.'
     def findNeighbor(self, block, direction):
         if not direction in ['N', 'S', 'E', 'W', 'U', 'D']:
-            return None
+            raise ValueError(f'Invalid direction: {direction}')
         condition = {'rad': block.crad, 'lat': block.clat, 'lon': block.clon}
         if direction == 'N' or direction == 'S':
             dy = block.south - block.north
@@ -58,24 +64,34 @@ class Model(list):
         lon = lambda x: (x + 360 if x < 0 else x) if readable else x
 
         keys = kwargs.keys()
+        dep_val = rad(kwargs['dep']) if 'dep' in keys else None
+        rad_val = kwargs['rad'] if 'rad' in keys else None
+        lat_val = lat(kwargs['lat']) if 'lat' in keys else None
+        lon_val = lon(kwargs['lon']) if 'lon' in keys else None
+
+        # Pre-round lon/lat if needed for efficiency
+        if lon_val is not None:
+            lon_val_rounded = np.round(lon_val, 4)
+
         results = []
-        for block_index in range(len(self)):
-            block = self[block_index]
-            if 'dep' in keys:
-                if rad(kwargs['dep']) >= block.top or rad(kwargs['dep']) < block.bottom:
+        for block in self:
+            if dep_val is not None:
+                if dep_val >= block.top or dep_val < block.bottom:
                     continue
-            if 'rad' in keys:
-                if kwargs['rad'] >= block.top or kwargs['rad'] < block.bottom:
+            if rad_val is not None:
+                if rad_val >= block.top or rad_val < block.bottom:
                     continue
-            if 'lat' in keys:
-                if lat(kwargs['lat']) >= block.south or lat(kwargs['lat']) < block.north:
+            if lat_val is not None:
+                if lat_val >= block.south or lat_val < block.north:
                     continue
-            if 'lon' in keys:
-                if np.round(lon(kwargs['lon']), 4) >= np.round(block.east, 4) or np.round(lon(kwargs['lon']), 4) < np.round(block.west, 4):
+            if lon_val is not None:
+                block_east = np.round(block.east, 4)
+                block_west = np.round(block.west, 4)
+                if lon_val_rounded >= block_east or lon_val_rounded < block_west:
                     continue
-            results.append(self[block_index])
             if find_one:
-                return results
+                return block
+            results.append(block)
         return results
 
 
