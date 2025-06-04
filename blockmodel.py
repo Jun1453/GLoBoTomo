@@ -1,6 +1,7 @@
 import numpy as np
 
-RADIUS1 = [3484.3,3661.0,3861.0,4061.0,4261.0,4461.0,4861.0,5061.0,5261.0,5411.0,5561.0,5711.0,5841.0,5971.0,6071.0,6171.0,6260.0,6349.0]
+# RADIUS1 = [3484.3,3661.0,3861.0,4061.0,4261.0,4461.0,4861.0,5061.0,5261.0,5411.0,5561.0,5711.0,5841.0,5971.0,6071.0,6171.0,6260.0,6349.0]
+RADIUS1 = [3480,3661.0,3861.0,4061.0,4261.0,4461.0,4861.0,5061.0,5261.0,5411.0,5561.0,5711.0,5841.0,5971.0,6071.0,6171.0,6260.0,6349.0] # for PREM
 RADIUS2 = [3661.0,3861.0,4061.0,4261.0,4461.0,4861.0,5061.0,5261.0,5411.0,5561.0,5711.0,5841.0,5971.0,6071.0,6171.0,6260.0,6349.0,6371.0]
 
 class Model(list):
@@ -33,35 +34,57 @@ class Model(list):
     def __repr__(self):
         return f'A model contains {len(self)} blocks.'
     def findNeighbor(self, block, direction):
-        if not direction in ['N', 'S', 'E', 'W', 'U', 'D']:
+        if not direction in ['N', 'S', 'E', 'W', 'U', 'D', 'all']:
             raise ValueError(f'Invalid direction: {direction}')
         condition = {'rad': block.crad, 'lat': block.clat, 'lon': block.clon}
         if direction == 'N' or direction == 'S':
             dy = block.south - block.north
-            dy *= -1 if direction == 'S' else 1
+            dy *= -1 if direction == 'N' else 1
             condition['lat'] += dy
-            if condition['lat'] > 180:
-                condition['lat'] = 360 - condition['lat']
-                condition['lon'] = (condition['lon'] + 180) % 360
-            elif condition['lat'] < 0:
-                condition['lat'] *= -1
-                condition['lon'] = (condition['lon'] + 180) % 360
+            results = []
+            condition_backup = condition
+            expanded_lon_conditions = np.append(np.arange(block.west+1e-6,block.east-1e-6,180/self.number_of_latitude_bands/1.8), block.east-1e-6)
+            lon = lambda x: x - 360 if x > 180 else x
+            print([lon(i) for i in expanded_lon_conditions])
+            for lon_cond in expanded_lon_conditions:
+                condition = condition_backup
+                condition['lon'] = lon_cond
+                if condition['lat'] > 180:
+                    condition['lat'] = 360 - condition['lat']
+                    condition['lon'] = (lon_cond + 180) % 360
+                elif condition['lat'] < 0:
+                    condition['lat'] *= -1
+                    condition['lon'] = (lon_cond + 180) % 360
+                result = self.findBlocks(readable=False, find_one=True, **condition)
+                if not result in results:
+                    results.append(result)
+            return results
         elif direction == 'E' or direction == 'W':
             dx = block.east - block.west
             dx *= -1 if direction == 'W' else 1
             condition['lon'] = (condition['lon'] + dx) % 360
-        else:
-            dz = block.top - block.bottom
-            dz *= -1 if direction == 'D' else 1
-            condition['rad'] += dz
+        elif direction == 'D':
+            condition['rad'] = block.bottom - 1
+        elif direction == 'U':
+            condition['rad'] = block.top + 1
+        elif direction == 'all':
+            # flatten nested list
+            neighbors = [self.findNeighbor(block, direction) for direction in ['N', 'S', 'E', 'W', 'U', 'D']]
+            # Flatten the list if any element is itself a list
+            flat_neighbors = []
+            for n in neighbors:
+                if isinstance(n, list):
+                    flat_neighbors.extend(n)
+                else:
+                    flat_neighbors.append(n)
+            return flat_neighbors
             
-        results = self.findBlocks(readable=False, find_one=True, **condition)
-        return results[0] if len(results) == 1 else None
+        return self.findBlocks(readable=False, find_one=False, **condition)
         
     def findBlocks(self, readable=True, find_one=False, **kwargs):
         rad = lambda z: 6371 - z
-        lat = lambda y: np.round(90 - y) if readable else y
-        lon = lambda x: (x + 360 if x < 0 else x) if readable else x
+        lat = lambda y: (90 - y) if readable is True else y
+        lon = lambda x: (x + 360 if x < 0 else x) if readable is True else x
 
         keys = kwargs.keys()
         dep_val = rad(kwargs['dep']) if 'dep' in keys else None
