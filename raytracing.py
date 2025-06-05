@@ -3,6 +3,7 @@ import tqdm
 import numpy as np
 import pandas as pd
 import pyproj
+import pickle
 import blockmodel
 from obspy.taup import TauPyModel
 from math import radians, degrees
@@ -148,15 +149,15 @@ def get_kernel_from_raypath(md: blockmodel.Model, raypath):
             row_kernel[this_block.id] -= euclidean_distance(this_point, next_point) * slowness(this_point)
             i += 1
         else:
-            neighbor_blocks = md.findNeighbor(this_block, 'all')
+            neighbor_block_ids = [blk.id for blk in md.findNeighbor(this_block, 'all')]
             tmp_point = this_point
-            while (not block(next_point) in neighbor_blocks):
+            while (not block(next_point).id in neighbor_block_ids):
                 # mid_point = (tmp_point + next_point) / 2
                 mid_point = geod_midpoint(tmp_point, next_point)
                 if verbose_level>1: print("find neighbors...", block(this_point).id, block(next_point).id, "@", mid_point[:3])
 
                 # if midpoint is neighbor, set as target point
-                if block(mid_point) in neighbor_blocks:
+                if block(mid_point).id in neighbor_block_ids:
                     next_point = mid_point
                     raypath = np.insert(raypath, i+1, mid_point, axis=0)
                     if verbose_level>1: print("insert neighbor:", mid_point[:3])
@@ -177,22 +178,22 @@ def get_kernel_from_raypath(md: blockmodel.Model, raypath):
             else:
                 lon_diff = lambda lons: (lons[0]-lons[1]-360) if lons[0]-lons[1]>180 else (lons[0]-lons[1]+360) if lons[0]-lons[1]<-180 else lons[0]-lons[1]
                 point_by_ratio = lambda r: this_point + np.array([lon_diff((next_point[0],this_point[0])), next_point[1]-this_point[1], next_point[2]-this_point[2], next_point[3]-this_point[3]]) * r
-                if next_block in md.findNeighbor(this_block, 'E'):
+                if next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'E')]:
                     boundary_point = point_by_ratio(lon_diff((lon(this_block.east),this_point[0]))/lon_diff((next_point[0],this_point[0])))
                     direction = [1, 0, 0, 0]
-                elif next_block in md.findNeighbor(this_block, 'W'):
+                elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'W')]:
                     boundary_point = point_by_ratio(lon_diff((lon(this_block.west),this_point[0]))/lon_diff((next_point[0],this_point[0])))
                     direction = [-1, 0, 0, 0]
-                elif next_block in md.findNeighbor(this_block, 'N'):
+                elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'N')]:
                     boundary_point = point_by_ratio((90-this_block.north - this_point[1])/(next_point[1] - this_point[1]))
                     direction = [0, 1, 0, 0]
-                elif next_block in md.findNeighbor(this_block, 'S'):
+                elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'S')]:
                     boundary_point = point_by_ratio((90-this_block.south - this_point[1])/(next_point[1] - this_point[1]))
                     direction = [0, -1, 0, 0]
-                elif next_block in md.findNeighbor(this_block, 'D'):
+                elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'D')]:
                     boundary_point = point_by_ratio((6371.-this_block.bottom - this_point[2])/(next_point[2] - this_point[2]))
                     direction = [0, 0, 1, 0]
-                elif next_block in md.findNeighbor(this_block, 'U'):
+                elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'U')]:
                     boundary_point = point_by_ratio((6371.-this_block.top - this_point[2])/(next_point[2] - this_point[2]))
                     direction = [0, 0, -1, 0]
                 
@@ -224,12 +225,14 @@ if __name__ == '__main__':
             verbose_level = max(verbose_level, 3)
 
     # Initialize model
-    grid = blockmodel.Model()
+    with open('g4_neighbor.pkl', 'rb') as f:
+        neighbor_table = pickle.load(f)
+    grid = blockmodel.Model(neighbor_table=neighbor_table)
     velocity = TauPyModel(model="prem")
     
     if verbose_level>0: print("loading pick catalog...")
     df = pd.read_pickle('globocat_1.2.2_sample.pkl')
-    res = [ get_raypath_coordinates(row['origin_lon'],row['origin_lat'],row['station_lon'],row['station_lat'],row['origin_dep']) for ind, row in df.sample(1000).iterrows() ]
+    res = [ get_raypath_coordinates(row['origin_lon'],row['origin_lat'],row['station_lon'],row['station_lat'],row['origin_dep']) for ind, row in df.sample(20000).iterrows() ]
     print("pick catalog loaded.")
 
     # Generate P kernel
@@ -241,4 +244,4 @@ if __name__ == '__main__':
             kernel_sparse.append([grid[i].clon-360 if grid[i].clon>180 else grid[i].clon, 90-grid[i].clat, grid[i].crad, val])
     kernel_sparse = np.array(kernel_sparse)
 
-    output_xyz(kernel_sparse, 'globocat_1.2.2_sample_ScS_fast_sparse.xyz', output_v=True, input_in_depth=False)
+    output_xyz(kernel_sparse, 'globocat_1.2.2_sample_ScS_sparse.xyz', output_v=True, input_in_depth=False)

@@ -5,11 +5,12 @@ RADIUS1 = [3480,3661.0,3861.0,4061.0,4261.0,4461.0,4861.0,5061.0,5261.0,5411.0,5
 RADIUS2 = [3661.0,3861.0,4061.0,4261.0,4461.0,4861.0,5061.0,5261.0,5411.0,5561.0,5711.0,5841.0,5971.0,6071.0,6171.0,6260.0,6349.0,6371.0]
 
 class Model(list):
-    def __init__(self, bsize=4, nshell=18):
+    def __init__(self, bsize=4, nshell=18, neighbor_table=None):
         self.number_of_latitude_bands = int(np.round(180 / bsize))
         self.block_size = 180 / self.number_of_latitude_bands
         self.number_of_shells = nshell
         self.number_of_blocks_in_band = np.zeros(self.number_of_latitude_bands)
+        self.neighbor_table = neighbor_table
         block_count = 0
         for shell in range(self.number_of_shells):
             bottom_radius = RADIUS1[shell]
@@ -38,6 +39,7 @@ class Model(list):
             raise ValueError(f'Invalid direction: {direction}')
         condition = {'rad': block.crad, 'lat': block.clat, 'lon': block.clon}
         if direction == 'N' or direction == 'S':
+            if self.neighbor_table is not None: return self.neighbor_table[block.id][direction]
             dy = block.south - block.north
             dy *= -1 if direction == 'N' else 1
             condition['lat'] += dy
@@ -78,8 +80,8 @@ class Model(list):
                 else:
                     flat_neighbors.append(n)
             return flat_neighbors
-            
-        return self.findBlocks(readable=False, find_one=False, **condition)
+        
+        return self.findBlocks(readable=False, find_one=False, **condition) if self.neighbor_table is None else self.neighbor_table[block.id][direction]
         
     def findBlocks(self, readable=True, find_one=False, **kwargs):
         rad = lambda z: 6371 - z
