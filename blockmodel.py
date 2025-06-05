@@ -43,9 +43,9 @@ class Model(list):
             condition['lat'] += dy
             results = []
             condition_backup = condition
-            expanded_lon_conditions = np.append(np.arange(block.west+1e-6,block.east-1e-6,180/self.number_of_latitude_bands/1.8), block.east-1e-6)
+            expanded_lon_conditions = np.append(np.arange(block.west+1e-4,block.east-1e-4,180/self.number_of_latitude_bands/1.8), block.east-1e-4)
             lon = lambda x: x - 360 if x > 180 else x
-            print([lon(i) for i in expanded_lon_conditions])
+            # print([lon(i) for i in expanded_lon_conditions])
             for lon_cond in expanded_lon_conditions:
                 condition = condition_backup
                 condition['lon'] = lon_cond
@@ -56,7 +56,7 @@ class Model(list):
                     condition['lat'] *= -1
                     condition['lon'] = (lon_cond + 180) % 360
                 result = self.findBlocks(readable=False, find_one=True, **condition)
-                if not result in results:
+                if (not result in results) and result != block:
                     results.append(result)
             return results
         elif direction == 'E' or direction == 'W':
