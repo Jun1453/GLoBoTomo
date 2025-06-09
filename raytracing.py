@@ -228,15 +228,14 @@ if __name__ == '__main__':
     with open('g4_neighbor.pkl', 'rb') as f:
         neighbor_table = pickle.load(f)
     grid = blockmodel.Model(neighbor_table=neighbor_table)
-    velocity = TauPyModel(model="prem")
     
     if verbose_level>0: print("loading pick catalog...")
-    df = pd.read_pickle('globocat_1.2.2_sample.pkl')
+    df = pd.read_pickle('globocat_1.2.2_sample_s.pkl')
     res = [ get_raypath_coordinates(row['origin_lon'],row['origin_lat'],row['station_lon'],row['station_lat'],row['origin_dep']) for ind, row in df.sample(20000).iterrows() ]
     print("pick catalog loaded.")
 
     # Generate P kernel
-    kernel = np.array([get_kernel_from_raypath(grid, path[2]) for path in tqdm.tqdm(res, desc="Generate ScS kernel")])
+    kernel = np.array([get_kernel_from_raypath(grid, path[1]) for path in tqdm.tqdm(res, desc="Generate S kernel")])
 
     kernel_sparse = []
     for i, val in enumerate(np.sum(kernel, axis=0)):
@@ -244,4 +243,4 @@ if __name__ == '__main__':
             kernel_sparse.append([grid[i].clon-360 if grid[i].clon>180 else grid[i].clon, 90-grid[i].clat, grid[i].crad, val])
     kernel_sparse = np.array(kernel_sparse)
 
-    output_xyz(kernel_sparse, 'globocat_1.2.2_sample_ScS_sparse.xyz', output_v=True, input_in_depth=False)
+    output_xyz(kernel_sparse, 'globocat_1.2.2_sample_S_sparse.xyz', output_v=True, input_in_depth=False)

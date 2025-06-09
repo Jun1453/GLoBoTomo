@@ -2,12 +2,13 @@
 A global mantle velocity tomographic model obtained from long-period P, S, ScS travel times.
 
 ## Agenda
-- [ ] Parameterization (Jun)
+- [x] Parameterization (Jun)
 - [ ] Ray tracing (Jun)
-	- [ ] 1D velocitry model (Jun)
+	- [x] 1D velocitry model (Jun)
 	- [ ] Sensitivity kernel matrix (Jun)
+	- [ ] Summary ray QC (Jun)
 - [ ] Correction
-	- [ ] Surface wave for upper mantle (Jun)
+	- [ ] Surface wave contrained model for upper mantle (Jun)
 	- [ ] Crust (Takumi)
 	- [ ] Ellipticity (Takumi)
 - [ ] Weighting (Takumi)
@@ -19,3 +20,6 @@ A global mantle velocity tomographic model obtained from long-period P, S, ScS t
 - Grid: ~HMSL (4º equiareal), double HMSL (2º equiareal)
 - Initial velocity model: PREM, AK135
 - Sensitivity matrices obtained: G4P, G4A, G2P, G2A
+- Probability threshold: 0.85 (P, S)
+- WIP: G4P - 40000/1057538 (20000/514580 + 20000/542958)
+- Planned: G4A, G2P, G2A
