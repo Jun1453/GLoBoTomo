@@ -94,9 +94,6 @@ class Model(list):
         lat_val = lat(kwargs['lat']) if 'lat' in keys else None
         lon_val = lon(kwargs['lon']) if 'lon' in keys else None
 
-        # Pre-round lon/lat if needed for efficiency
-        if lon_val is not None:
-            lon_val_rounded = np.round(lon_val, 4)
 
         results = []
         for block in self:
@@ -110,9 +107,7 @@ class Model(list):
                 if lat_val >= block.south or lat_val < block.north:
                     continue
             if lon_val is not None:
-                block_east = np.round(block.east, 4)
-                block_west = np.round(block.west, 4)
-                if lon_val_rounded >= block_east or lon_val_rounded < block_west:
+                if lon_val >= block.east or lon_val < block.west:
                     continue
             if find_one:
                 return block
