@@ -10,6 +10,9 @@ from math import radians, degrees
 from numpy import sin, cos, deg2rad
 from obspy.geodetics import kilometer2degrees,degrees2kilometers
 
+geod = pyproj.Geod(ellps="WGS84")
+velo = TauPyModel(model="prem")
+
 def get_xyz(array, include_v=True, input_in_depth=False):
     # Extract longitude, latitude, and depth from res[0]
     lons = array[:, 0]
@@ -48,9 +51,6 @@ def get_xyz(array, include_v=True, input_in_depth=False):
     return df
 
 def get_raypath_coordinates(lon1, lat1, lon2, lat2, source_depth_km, receiver_depth_km=0, phase_list=('P', 'S', 'ScS')):
-    geod = pyproj.Geod(ellps="WGS84")
-    velo = TauPyModel(model="prem")
-
     az, back_az, dist = geod.inv(lon1, lat1, lon2, lat2)
     distance_degree = kilometer2degrees(dist/1000)
     taup_arrivals = velo.get_ray_paths(source_depth_in_km=source_depth_km,
@@ -72,10 +72,13 @@ def get_raypath_coordinates(lon1, lat1, lon2, lat2, source_depth_km, receiver_de
         # return dx,dz
         p = 1/(degrees(1/taup_path[0][0])) #s/rad to s/deg
         p = 1/degrees2kilometers(1/p, 6371-taup_depths[1:]) #s/deg to s/km
-        slownesses = p / np.sin(np.arctan2(dx,dz))
+        sin_theta = np.sin(np.arctan2(dx,dz))
+        slownesses = p / sin_theta
         # print(taup_path[0][0])
         slownesses = np.insert(slownesses,0,slownesses[0])
-        results.append(np.array([lons, lats, taup_depths, slownesses]).T)
+        path_lengths = degrees2kilometers(dx, taup_depths[1:]) / sin_theta
+        path_lengths = np.insert(path_lengths,0,path_lengths[0])
+        results.append(np.array([lons, lats, taup_depths, slownesses, path_lengths]).T)
         
     return results
 
@@ -123,10 +126,10 @@ def geod_midpoint(point1, point2):
     # lon, lat, az = geod.fwd(point1[0], point1[1], az, dist/2)
     # return np.array([lon, lat, (point1[2]+point2[2])/2, (point1[3]+point2[3])/2])
     lon_diff = lambda lons: (lons[0]-lons[1]-360) if lons[0]-lons[1]>180 else (lons[0]-lons[1]+360) if lons[0]-lons[1]<-180 else lons[0]-lons[1]
-    return point1 + np.array([lon_diff((point2[0],point1[0])), point2[1]-point1[1], point2[2]-point1[2], point2[3]-point1[3]]) / 2
+    return point1 + np.array([lon_diff((point2[0],point1[0])), point2[1]-point1[1], point2[2]-point1[2], point2[3]-point1[3], point2[4]-point1[4]]) / 2
     
 
-def get_kernel_from_raypath(md: blockmodel.Model, raypath):
+def get_kernel_from_raypath(md: blockmodel.Model, raypath, use_taup_dx=True):
     epsilon = 1e-4
     row_kernel = np.zeros_like(md)
     lon = lambda phi: (phi + 180) % 360 - 180
@@ -134,6 +137,7 @@ def get_kernel_from_raypath(md: blockmodel.Model, raypath):
     i = 0
     while(i < len(raypath)-1):
         slowness = lambda pt: pt[3]
+        path_length = lambda pt: pt[4]
         block = lambda pt: md.findBlocks(readable=True,
                                         find_one=True,
                                         lon=float(pt[0]),
@@ -146,7 +150,10 @@ def get_kernel_from_raypath(md: blockmodel.Model, raypath):
         this_block = block(this_point)
         next_block = block(next_point)
         if verbose_level>2: print(this_point[:3], this_block.id, next_point[:3], next_block.id, this_block == next_block)
-        if this_block == next_block:
+        if use_taup_dx==True:
+            row_kernel[this_block.id] -= path_length(this_point) * slowness(this_point)
+            i += 1
+        elif this_block == next_block:
             row_kernel[this_block.id] -= euclidean_distance(this_point, next_point) * slowness(this_point)
             i += 1
         else:
@@ -178,27 +185,27 @@ def get_kernel_from_raypath(md: blockmodel.Model, raypath):
                 boundary_point = next_point
             else:
                 lon_diff = lambda lons: (lons[0]-lons[1]-360) if lons[0]-lons[1]>180 else (lons[0]-lons[1]+360) if lons[0]-lons[1]<-180 else lons[0]-lons[1]
-                point_by_ratio = lambda r: this_point + np.array([lon_diff((next_point[0],this_point[0])), next_point[1]-this_point[1], next_point[2]-this_point[2], next_point[3]-this_point[3]]) * r
+                point_by_ratio = lambda r: this_point + np.array([lon_diff((next_point[0],this_point[0])), next_point[1]-this_point[1], next_point[2]-this_point[2], next_point[3]-this_point[3], next_point[4]-this_point[4]]) * r
                 if next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'E')]:
                     boundary_point = point_by_ratio(lon_diff((lon(this_block.east),this_point[0]))/lon_diff((next_point[0],this_point[0])))
-                    direction = [1, 0, 0, 0]
+                    direction = [1, 0, 0, 0, 0]
                 elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'W')]:
                     boundary_point = point_by_ratio(lon_diff((lon(this_block.west),this_point[0]))/lon_diff((next_point[0],this_point[0])))
-                    direction = [-1, 0, 0, 0]
+                    direction = [-1, 0, 0, 0, 0]
                 elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'N')]:
                     boundary_point = point_by_ratio((90-this_block.north - this_point[1])/(next_point[1] - this_point[1]))
-                    direction = [0, 1, 0, 0]
+                    direction = [0, 1, 0, 0, 0]
                 elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'S')]:
                     boundary_point = point_by_ratio((90-this_block.south - this_point[1])/(next_point[1] - this_point[1]))
-                    direction = [0, -1, 0, 0]
+                    direction = [0, -1, 0, 0, 0]
                 elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'D')]:
                     boundary_point = point_by_ratio((6371.-this_block.bottom - this_point[2])/(next_point[2] - this_point[2]))
-                    direction = [0, 0, 1, 0]
+                    direction = [0, 0, 1, 0, 0]
                 elif next_block.id in [blk.id for blk in md.findNeighbor(this_block, 'U')]:
                     boundary_point = point_by_ratio((6371.-this_block.top - this_point[2])/(next_point[2] - this_point[2]))
-                    direction = [0, 0, -1, 0]
+                    direction = [0, 0, -1, 0, 0]
                 
-                if verbose_level>1: print("neighbor:", direction)
+                if verbose_level>1: print("neighbor:", direction[:3])
                 boundary_point_across = boundary_point + np.array(direction) * epsilon
                 boundary_point_across[0] = lon(boundary_point_across[0])
                 boundary_point_across[1] = lat(boundary_point_across[1])
@@ -246,12 +253,12 @@ if __name__ == '__main__':
     grid = blockmodel.Model(neighbor_table=neighbor_table)
     
     if verbose_level>0: print("loading pick catalog...")
-    df = pd.read_pickle(f'globocat_1.2.2_sample_{phase.lower()}.pkl').sample(10000)
-    res = [ get_raypath_coordinates(row['origin_lon'],row['origin_lat'],row['station_lon'],row['station_lat'],row['origin_dep']) for ind, row in df.iterrows() ]
+    df = pd.read_pickle(f'globocat_1.2.2_sample_{phase.lower()}.pkl')[:10000]#.sample(10000)
     print("pick catalog loaded.")
+    res = [ get_raypath_coordinates(row['origin_lon'],row['origin_lat'],row['station_lon'],row['station_lat'],row['origin_dep'],phase_list=(phase)) for ind, row in tqdm.tqdm(df.iterrows(), desc=f"Calculating {phase} ray", total=len(df)) ]
 
     # Generate P kernel
-    kernel = np.array([get_kernel_from_raypath(grid, path[path_no]) for path in tqdm.tqdm(res, desc=f"Generate {phase} kernel")])
+    kernel = np.array([get_kernel_from_raypath(grid, path[path_no], use_taup_dx=True) for path in tqdm.tqdm(res, desc=f"Generating {phase} kernel")])
     np.savez(f'globocat_1.2.2_sample_{phase}', kmat=kernel, res=df['anomaly'].values, prob=df['probability'].values)
 
     kernel_sparse = []
@@ -260,5 +267,6 @@ if __name__ == '__main__':
             kernel_sparse.append([grid[i].clon-360 if grid[i].clon>180 else grid[i].clon, 90-grid[i].clat, grid[i].crad, val])
     kernel_sparse = np.array(kernel_sparse)
 
-    out = get_xyz(kernel_sparse, output_v=True, input_in_depth=False)
+    out = get_xyz(kernel_sparse, include_v=True, input_in_depth=False)
     out.to_csv(f'globocat_1.2.2_sample_{phase}_sparse.xyz', index=False)
+    print("kernel saved.")
