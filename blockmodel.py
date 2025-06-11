@@ -96,22 +96,32 @@ class Model(list):
 
 
         results = []
-        for block in self:
-            if dep_val is not None:
-                if dep_val >= block.top or dep_val < block.bottom:
-                    continue
-            if rad_val is not None:
-                if rad_val >= block.top or rad_val < block.bottom:
-                    continue
-            if lat_val is not None:
-                if lat_val >= block.south or lat_val < block.north:
-                    continue
-            if lon_val is not None:
-                if lon_val >= block.east or lon_val < block.west:
-                    continue
-            if find_one:
-                return block
-            results.append(block)
+
+        if find_one:
+            if lat_val is None or lon_val is None: raise ValueError("Incorrect latitude/longitude condition.")
+            for nlayer in range(self.number_of_shells):
+                if (rad_val or dep_val) >= RADIUS1[nlayer] and (rad_val or dep_val) < RADIUS2[nlayer]: break
+                if nlayer == self.number_of_shells: raise ValueError("Incorrect depth/radius condition.")
+            nband = int(lat_val // self.block_size)
+            nsequence = int(lon_val // (360/self.number_of_blocks_in_band[nband]))
+            blk_number = nlayer * int(len(self)/self.number_of_shells) + int(sum(self.number_of_blocks_in_band[:nband])) + nsequence
+            return self[blk_number]
+
+        else:
+            for block in self:
+                if dep_val is not None:
+                    if dep_val >= block.top or dep_val < block.bottom:
+                        continue
+                if rad_val is not None:
+                    if rad_val >= block.top or rad_val < block.bottom:
+                        continue
+                if lat_val is not None:
+                    if lat_val >= block.south or lat_val < block.north:
+                        continue
+                if lon_val is not None:
+                    if lon_val >= block.east or lon_val < block.west:
+                        continue
+                results.append(block)
         return results
 
 
