@@ -4,12 +4,15 @@ import numpy as np
 import pandas as pd
 import pyproj
 import pickle
+import builtins
 import blockmodel
 from obspy.taup import TauPyModel
 from math import radians, degrees
 from numpy import sin, cos, deg2rad
+from scipy.sparse import csr_matrix, vstack, save_npz
 from obspy.geodetics import kilometer2degrees,degrees2kilometers
 
+verbose_level = getattr(builtins, 'verbose_level', 0)
 geod = pyproj.Geod(ellps="WGS84")
 velo = TauPyModel(model="prem")
 
@@ -79,6 +82,9 @@ def get_raypath_coordinates(lon1, lat1, lon2, lat2, source_depth_km, receiver_de
         path_lengths = degrees2kilometers(dx, taup_depths[1:]) / sin_theta
         path_lengths = np.insert(path_lengths,0,path_lengths[0])
         results.append(np.array([lons, lats, taup_depths, slownesses, path_lengths]).T)
+        # for angle, csc_theta, length in zip(np.arcsin(sin_theta)/np.pi*180, 1/sin_theta, path_lengths[1:]):
+        #     print(f"{angle:5.2f} {csc_theta:7.4f} {length:7.4f}")
+        # print('')
         
     return results
 
@@ -129,9 +135,9 @@ def geod_midpoint(point1, point2):
     return point1 + np.array([lon_diff((point2[0],point1[0])), point2[1]-point1[1], point2[2]-point1[2], point2[3]-point1[3], point2[4]-point1[4]]) / 2
     
 
-def get_kernel_from_raypath(md: blockmodel.Model, raypath, use_taup_dx=True):
+def get_kernel_from_raypath(md: blockmodel.Model, raypath, use_taup_dx=True, return_sparse=True):
     epsilon = 1e-4
-    row_kernel = np.zeros_like(md)
+    row_kernel = np.zeros_like(md, dtype=np.float32)
     lon = lambda phi: (phi + 180) % 360 - 180
     lat = lambda psi: (180 - psi) if psi > 90 else (-180 - psi) if psi < -90 else psi
     i = 0
@@ -217,7 +223,7 @@ def get_kernel_from_raypath(md: blockmodel.Model, raypath, use_taup_dx=True):
             raypath = np.insert(raypath, i+1, boundary_point_across, axis=0)
             i += 1
     
-    return row_kernel
+    return csr_matrix(row_kernel) if return_sparse else row_kernel
 
 if __name__ == '__main__':
     # Default verbose level
@@ -253,20 +259,33 @@ if __name__ == '__main__':
     grid = blockmodel.Model(neighbor_table=neighbor_table)
     
     if verbose_level>0: print("loading pick catalog...")
-    df = pd.read_pickle(f'globocat_1.2.2_sample_{phase.lower()}.pkl')[:10000]#.sample(10000)
+    # df = pd.read_pickle(f'globocat_1.2.2_sample_{phase.lower()}.pkl').sample(1000)
+    df = pd.read_pickle(f'globocat_1.2.0_{phase.lower()}_srqc.pkl')
     print("pick catalog loaded.")
-    res = [ get_raypath_coordinates(row['origin_lon'],row['origin_lat'],row['station_lon'],row['station_lat'],row['origin_dep'],phase_list=(phase)) for ind, row in tqdm.tqdm(df.iterrows(), desc=f"Calculating {phase} ray", total=len(df)) ]
 
-    # Generate P kernel
-    kernel = np.array([get_kernel_from_raypath(grid, path[path_no], use_taup_dx=True) for path in tqdm.tqdm(res, desc=f"Generating {phase} kernel")])
-    np.savez(f'globocat_1.2.2_sample_{phase}', kmat=kernel, res=df['anomaly'].values, prob=df['probability'].values)
+    # Generate kernel
+    kernel_rows = []
+    anomalies = []
+    probabilities = []
+    for ind, row in tqdm.tqdm(df.iterrows(), desc=f"Generating {phase} kernel from ray", total=len(df)):
+        raypaths = get_raypath_coordinates(row['origin_lon'],row['origin_lat'],row['station_lon'],row['station_lat'],row['origin_dep'],phase_list=(phase))
+        if len(raypaths) > 0:
+            kernel_rows.append(get_kernel_from_raypath(grid, raypaths[0], use_taup_dx=False))
+            anomalies.append(row['anomaly'])
+            probabilities.append(row['probability'])
 
-    kernel_sparse = []
-    for i, val in enumerate(np.sum(kernel, axis=0)):
-        if val != 0: 
-            kernel_sparse.append([grid[i].clon-360 if grid[i].clon>180 else grid[i].clon, 90-grid[i].clat, grid[i].crad, val])
-    kernel_sparse = np.array(kernel_sparse)
+   
+    kernel_sparse = vstack(kernel_rows, dtype=np.float32)
+    # kernel_sparse = csr_matrix(kernel)
+    save_npz(f'globocat_1.2.2_sample_{phase}_sparse', kernel_sparse)
+    np.savez(f'globocat_1.2.2_sample_{phase}_ttres', residual=np.array(anomalies, dtype=np.float32), prob=np.array(probabilities, dtype=np.float32))
 
-    out = get_xyz(kernel_sparse, include_v=True, input_in_depth=False)
-    out.to_csv(f'globocat_1.2.2_sample_{phase}_sparse.xyz', index=False)
+    # kernel_sparse = []
+    # for i, val in enumerate(np.sum(kernel, axis=0)):
+    #     if val != 0: 
+    #         kernel_sparse.append([grid[i].clon-360 if grid[i].clon>180 else grid[i].clon, 90-grid[i].clat, grid[i].crad, val])
+    # kernel_sparse = np.array(kernel_sparse)
+
+    # out = get_xyz(kernel_sparse, include_v=True, input_in_depth=False)
+    # out.to_csv(f'globocat_1.2.2_sample_{phase}_sparse.xyz', index=False)
     print("kernel saved.")
