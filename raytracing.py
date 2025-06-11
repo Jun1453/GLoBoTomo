@@ -10,12 +10,12 @@ from math import radians, degrees
 from numpy import sin, cos, deg2rad
 from obspy.geodetics import kilometer2degrees,degrees2kilometers
 
-def output_xyz(array, filepath, output_v=True, input_in_depth=False):
+def get_xyz(array, include_v=True, input_in_depth=False):
     # Extract longitude, latitude, and depth from res[0]
     lons = array[:, 0]
     lats = array[:, 1]
     z = array[:, 2]
-    if output_v: vals = array[:, 3]
+    if include_v: vals = array[:, 3]
 
     # Assume Earth radius in km
     R_earth = 6371.0
@@ -39,12 +39,13 @@ def output_xyz(array, filepath, output_v=True, input_in_depth=False):
     y_norm = y / 2 / R_earth
     z_norm = z / 2 / R_earth
 
-    if output_v:
+    if include_v:
         df = pd.DataFrame(np.stack([x_norm, y_norm, z_norm, vals], axis=1), columns=["x", "y", "z", "val"])
     else:
         df = pd.DataFrame(np.stack([x_norm, y_norm, z_norm], axis=1), columns=["x", "y", "z"])
-    df.to_csv(filepath, index=False)
+    # df.to_csv(filepath, index=False)
     if verbose_level>2: print(df.to_csv(index=False))
+    return df
 
 def get_raypath_coordinates(lon1, lat1, lon2, lat2, source_depth_km, receiver_depth_km=0, phase_list=('P', 'S', 'ScS')):
     geod = pyproj.Geod(ellps="WGS84")
@@ -214,6 +215,7 @@ def get_kernel_from_raypath(md: blockmodel.Model, raypath):
 if __name__ == '__main__':
     # Default verbose level
     verbose_level = 0
+    phase = None
 
     # Parse command line arguments for verbosity flags
     for arg in sys.argv[1:]:
@@ -224,18 +226,33 @@ if __name__ == '__main__':
         elif arg == '-vvv':
             verbose_level = max(verbose_level, 3)
 
+    for arg in sys.argv[1:]:
+        if arg == '-P':
+            path_no = 0
+        elif arg == '-S':
+            path_no = 1
+        elif arg == '-ScS':
+            path_no = 2
+        else: continue
+
+        if not phase is None: raise ValueError("Phase is already defined.")
+        phase = arg[1:]
+
+    if phase is None: raise ValueError("Phase is not defined.")
+
     # Initialize model
     with open('g4_neighbor.pkl', 'rb') as f:
         neighbor_table = pickle.load(f)
     grid = blockmodel.Model(neighbor_table=neighbor_table)
     
     if verbose_level>0: print("loading pick catalog...")
-    df = pd.read_pickle('globocat_1.2.2_sample_s.pkl')
-    res = [ get_raypath_coordinates(row['origin_lon'],row['origin_lat'],row['station_lon'],row['station_lat'],row['origin_dep']) for ind, row in df.sample(20000).iterrows() ]
+    df = pd.read_pickle(f'globocat_1.2.2_sample_{phase.lower()}.pkl').sample(10000)
+    res = [ get_raypath_coordinates(row['origin_lon'],row['origin_lat'],row['station_lon'],row['station_lat'],row['origin_dep']) for ind, row in df.iterrows() ]
     print("pick catalog loaded.")
 
     # Generate P kernel
-    kernel = np.array([get_kernel_from_raypath(grid, path[1]) for path in tqdm.tqdm(res, desc="Generate S kernel")])
+    kernel = np.array([get_kernel_from_raypath(grid, path[path_no]) for path in tqdm.tqdm(res, desc=f"Generate {phase} kernel")])
+    np.savez(f'globocat_1.2.2_sample_{phase}', kmat=kernel, res=df['anomaly'].values, prob=df['probability'].values)
 
     kernel_sparse = []
     for i, val in enumerate(np.sum(kernel, axis=0)):
@@ -243,4 +260,5 @@ if __name__ == '__main__':
             kernel_sparse.append([grid[i].clon-360 if grid[i].clon>180 else grid[i].clon, 90-grid[i].clat, grid[i].crad, val])
     kernel_sparse = np.array(kernel_sparse)
 
-    output_xyz(kernel_sparse, 'globocat_1.2.2_sample_S_sparse.xyz', output_v=True, input_in_depth=False)
+    out = get_xyz(kernel_sparse, output_v=True, input_in_depth=False)
+    out.to_csv(f'globocat_1.2.2_sample_{phase}_sparse.xyz', index=False)
